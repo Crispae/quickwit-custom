@@ -41,6 +41,13 @@ pub trait SplitSidecar: Send + Sync + 'static {
     /// `sources` are in output row order (the order the search index stacks its segments); each
     /// source contributes only its `alive_docs`. Write the result to `out`.
     fn merge(&self, sources: &[SidecarMergeSource], out: &Path) -> io::Result<()>;
+
+    /// Byte ranges of the finished file worth keeping in the split's hotcache (e.g. its
+    /// index / trailer), so opening it at search time costs no extra request. The file is always
+    /// listed in the hotcache, which is what makes it openable through the split's directory.
+    fn hotcache_ranges(&self, _file: &[u8]) -> Vec<std::ops::Range<usize>> {
+        Vec::new()
+    }
 }
 
 /// Accumulates the rows of one split.

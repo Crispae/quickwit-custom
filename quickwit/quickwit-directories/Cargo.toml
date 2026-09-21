@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 quickwit-common = { workspace = true }
+quickwit-extensions = { workspace = true }
 quickwit-storage = { workspace = true }
 
 [dev-dependencies]

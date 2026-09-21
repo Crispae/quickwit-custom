@@ -534,6 +534,23 @@ pub fn write_hotcache<D: Directory>(
             }
         }
     }
+    // Extension sidecars are not tantivy files: list them so the split's (hot) directory can open
+    // them at search time, and keep whatever the extension deems always needed.
+    for sidecar in quickwit_extensions::split_sidecars() {
+        let file_path = PathBuf::from(sidecar.file_name());
+        let file_slice = match debug_proxy_directory.open_read(&file_path) {
+            Ok(file_slice) => file_slice,
+            Err(tantivy::directory::error::OpenReadError::FileDoesNotExist(_)) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        let bytes = file_slice.read_bytes()?;
+        let file_cache_builder = cache_builder.add_file(&file_path, bytes.len() as u64);
+        for byte_range in sidecar.hotcache_ranges(bytes.as_slice()) {
+            if byte_range.end <= bytes.len() {
+                file_cache_builder.add_bytes(&bytes[byte_range.clone()], byte_range.start);
+            }
+        }
+    }
     cache_builder.write(output)?;
     output.flush()?;
     Ok(())
