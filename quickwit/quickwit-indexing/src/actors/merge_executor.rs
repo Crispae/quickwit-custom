@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, ensure};
 use async_trait::async_trait;
 use fail::fail_point;
 use itertools::Itertools;
@@ -514,6 +514,30 @@ impl MergeExecutor {
         output_path: &Path,
         ctx: &ActorContext<MergeExecutor>,
     ) -> anyhow::Result<ControlledDirectory> {
+        // Which input directory holds each segment, for extension sidecars. Derived from each
+        // split's own metadata: `combine_index_meta` does not keep the input order.
+        let sidecars = quickwit_extensions::split_sidecars();
+        let mut segment_directory: HashMap<SegmentId, usize> = HashMap::new();
+        if !sidecars.is_empty() {
+            for (dir_idx, directory) in split_directories.iter().enumerate() {
+                let index = open_index(
+                    directory.box_clone(),
+                    self.doc_mapper.tokenizer_manager().tantivy_manager(),
+                )?;
+                for segment_id in index.searchable_segment_ids()? {
+                    segment_directory.insert(segment_id, dir_idx);
+                }
+            }
+        }
+        let sidecar_input_directories: Vec<Box<dyn Directory>> = if sidecars.is_empty() {
+            Vec::new()
+        } else {
+            split_directories
+                .iter()
+                .map(|dir| dir.box_clone())
+                .collect()
+        };
+
         let shadowing_meta_json_directory = create_shadowing_meta_json_directory(union_index_meta)?;
 
         // This directory is here to receive the merged split, as well as the final meta.json file.
@@ -584,12 +608,116 @@ impl MergeExecutor {
             return Ok(output_directory);
         }
 
+        // Captured before merging: tantivy numbers the merged documents by stacking the
+        // alive documents of `segment_ids`, in that order (no index sorting in Quickwit).
+        let sidecar_sources = if sidecars.is_empty() {
+            Vec::new()
+        } else {
+            sidecar_merge_sources(
+                &union_index,
+                &segment_ids,
+                &segment_directory,
+                &sidecar_input_directories,
+                &sidecars,
+            )?
+        };
+
         debug!(segment_ids=?segment_ids,"merging-segments");
         // TODO it would be nice if tantivy could let us run the merge in the current thread.
         index_writer.merge(&segment_ids).await?;
 
+        if !sidecars.is_empty() {
+            let expected_rows: u64 = sidecar_sources
+                .first()
+                .map(|sources| {
+                    sources
+                        .iter()
+                        .map(|source| {
+                            source
+                                .alive_docs
+                                .as_ref()
+                                .map_or(source.num_docs as u64, |alive| alive.len() as u64)
+                        })
+                        .sum()
+                })
+                .unwrap_or(0);
+            let merged_docs: u64 = open_index(
+                output_directory.box_clone(),
+                self.doc_mapper.tokenizer_manager().tantivy_manager(),
+            )?
+            .searchable_segment_metas()?
+            .iter()
+            .map(|meta| meta.max_doc() as u64)
+            .sum();
+            ensure!(
+                merged_docs == expected_rows,
+                "merged split has {merged_docs} documents but its sidecars were built for \
+                 {expected_rows} rows"
+            );
+            for (sidecar, sources) in sidecars.iter().zip(&sidecar_sources) {
+                sidecar
+                    .merge(sources, &output_path.join(sidecar.file_name()))
+                    .with_context(|| {
+                        format!("failed to merge sidecar `{}`", sidecar.file_name())
+                    })?;
+            }
+        }
+
         Ok(output_directory)
     }
+}
+
+/// For each registered sidecar, its inputs in merged-row order: one per segment of
+/// `segment_ids`, carrying that segment's surviving documents.
+fn sidecar_merge_sources(
+    union_index: &Index,
+    segment_ids: &[SegmentId],
+    segment_directory: &HashMap<SegmentId, usize>,
+    input_directories: &[Box<dyn Directory>],
+    sidecars: &[Arc<dyn quickwit_extensions::SplitSidecar>],
+) -> anyhow::Result<Vec<Vec<quickwit_extensions::SidecarMergeSource>>> {
+    let segments: HashMap<SegmentId, tantivy::Segment> = union_index
+        .searchable_segments()?
+        .into_iter()
+        .map(|segment| (segment.id(), segment))
+        .collect();
+    let mut per_segment = Vec::with_capacity(segment_ids.len());
+    for segment_id in segment_ids {
+        let segment = segments
+            .get(segment_id)
+            .with_context(|| format!("segment {segment_id:?} vanished before merge"))?;
+        let reader = SegmentReader::open(segment)?;
+        let alive_docs = reader
+            .alive_bitset()
+            .map(|_| reader.doc_ids_alive().collect::<Vec<u32>>());
+        let dir_idx = *segment_directory
+            .get(segment_id)
+            .with_context(|| format!("no input split holds segment {segment_id:?}"))?;
+        per_segment.push((reader.max_doc(), alive_docs, dir_idx));
+    }
+    sidecars
+        .iter()
+        .map(|sidecar| {
+            per_segment
+                .iter()
+                .map(|(num_docs, alive_docs, dir_idx)| {
+                    let directory = &input_directories[*dir_idx];
+                    let path = Path::new(sidecar.file_name());
+                    let data: Option<Arc<dyn AsRef<[u8]> + Send + Sync>> =
+                        if directory.exists(path)? {
+                            Some(Arc::new(directory.open_read(path)?.read_bytes()?))
+                        } else {
+                            None
+                        };
+                    Ok(quickwit_extensions::SidecarMergeSource {
+                        data,
+                        num_docs: *num_docs,
+                        alive_docs: alive_docs.clone(),
+                    })
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn open_index<T: Into<Box<dyn Directory>>>(

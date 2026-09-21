@@ -1,0 +1,15 @@
+[package]
+name = "quickwit-extensions"
+description = "Process-global registries for third-party extensions (split sidecar components, custom queries)"
+
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+repository.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes = { workspace = true }
+serde_json = { workspace = true }

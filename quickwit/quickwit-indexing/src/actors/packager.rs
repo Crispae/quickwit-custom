@@ -201,6 +201,13 @@ fn list_split_files(
             }
         }
     }
+    // Extension components live next to tantivy's files and travel in the same bundle.
+    for sidecar in quickwit_extensions::split_sidecars() {
+        let filepath = scratch_directory.path().join(sidecar.file_name());
+        if filepath.try_exists()? {
+            split_files.push(filepath);
+        }
+    }
     split_files.sort();
     Ok(split_files)
 }

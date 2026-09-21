@@ -239,7 +239,8 @@ impl Iterator for JsonDocIterator {
 }
 
 impl<E> From<Result<JsonDoc, E>> for JsonDocIterator
-where E: Into<DocProcessorError>
+where
+    E: Into<DocProcessorError>,
 {
     fn from(result: Result<JsonDoc, E>) -> Self {
         match result {
@@ -276,7 +277,9 @@ pub struct DocProcessorCounter {
 
 impl Serialize for DocProcessorCounter {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer {
+    where
+        S: serde::Serializer,
+    {
         serializer.serialize_u64(self.get_num_docs())
     }
 }
@@ -406,6 +409,7 @@ impl DocProcessorCounters {
 
 pub struct DocProcessor {
     doc_mapper: Arc<DocMapper>,
+    sidecars: Vec<Arc<dyn quickwit_extensions::SplitSidecar>>,
     indexer_mailbox: Mailbox<Indexer>,
     timestamp_field_opt: Option<Field>,
     counters: Arc<DocProcessorCounters>,
@@ -430,6 +434,7 @@ impl DocProcessor {
         }
         Ok(DocProcessor {
             doc_mapper,
+            sidecars: quickwit_extensions::split_sidecars(),
             indexer_mailbox,
             timestamp_field_opt,
             counters: Arc::new(DocProcessorCounters::new(index_id, source_id)),
@@ -495,15 +500,24 @@ impl DocProcessor {
     fn process_json_doc(&self, json_doc: JsonDoc) -> Result<ProcessedDoc, DocProcessorError> {
         let num_bytes = json_doc.num_bytes;
 
+        // Extensions take their payload first, so the doc mapping never sees it.
+        let mut json_obj = json_doc.json_obj;
+        let sidecar_rows = self
+            .sidecars
+            .iter()
+            .map(|sidecar| sidecar.extract(&mut json_obj))
+            .collect();
+
         let (partition, doc) = self
             .doc_mapper
-            .doc_from_json_obj(json_doc.json_obj, json_doc.num_bytes as u64)?;
+            .doc_from_json_obj(json_obj, json_doc.num_bytes as u64)?;
         let timestamp_opt = self.extract_timestamp(&doc)?;
         Ok(ProcessedDoc {
             doc,
             timestamp_opt,
             partition,
             num_bytes,
+            sidecar_rows,
         })
     }
 }

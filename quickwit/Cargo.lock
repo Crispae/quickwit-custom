@@ -8740,6 +8740,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quickwit-extensions"
+version = "0.9.0"
+dependencies = [
+ "bytes",
+ "serde_json",
+]
+
+[[package]]
 name = "quickwit-index-management"
 version = "0.9.0"
 dependencies = [
@@ -8801,6 +8809,7 @@ dependencies = [
  "quickwit-directories",
  "quickwit-doc-mapper",
  "quickwit-dst",
+ "quickwit-extensions",
  "quickwit-indexing",
  "quickwit-ingest",
  "quickwit-metastore",

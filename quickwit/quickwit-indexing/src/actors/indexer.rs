@@ -301,6 +301,7 @@ impl IndexerState {
                 timestamp_opt,
                 partition,
                 num_bytes,
+                sidecar_rows,
             } = doc;
             counters.num_docs_in_workbench += 1;
             let (indexed_split, split_created) = self.get_or_create_indexed_split(
@@ -327,6 +328,10 @@ impl IndexerState {
                 .index_writer
                 .add_document(doc)
                 .context("failed to add document")?;
+            // Same order as `add_document`, so sidecar row i is document id i.
+            indexed_split
+                .push_sidecar_rows(sidecar_rows)
+                .context("failed to append to split sidecar")?;
             let mem_usage_after = indexed_split.index_writer.mem_usage() as u64;
             memory_usage_delta += mem_usage_after as i64 - mem_usage_before as i64;
             ctx.record_progress();
@@ -793,6 +798,7 @@ mod tests {
                         timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                         partition: 1,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                     ProcessedDoc {
                         doc: doc!(
@@ -802,6 +808,7 @@ mod tests {
                         timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                         partition: 1,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                 ],
                 SourceCheckpointDelta::from_range(4..6),
@@ -819,6 +826,7 @@ mod tests {
                         timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435i64)),
                         partition: 1,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                     ProcessedDoc {
                         doc: doc!(
@@ -828,6 +836,7 @@ mod tests {
                         timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                         partition: 1,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                 ],
                 SourceCheckpointDelta::from_range(6..8),
@@ -844,6 +853,7 @@ mod tests {
                     timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                     partition: 1,
                     num_bytes: 30,
+                    sidecar_rows: Vec::new(),
                 }],
                 SourceCheckpointDelta::from_range(8..9),
                 false,
@@ -929,6 +939,7 @@ mod tests {
                 timestamp_opt: None,
                 partition: 0,
                 num_bytes,
+                sidecar_rows: Vec::new(),
             }
         };
         for i in 0..10_000 {
@@ -1007,6 +1018,7 @@ mod tests {
                             timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                             partition: 1,
                             num_bytes: 30,
+                            sidecar_rows: Vec::new(),
                         }],
                         SourceCheckpointDelta::from_range(position..position + 1),
                         false,
@@ -1085,6 +1097,7 @@ mod tests {
                     timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                     partition: 1,
                     num_bytes: 30,
+                    sidecar_rows: Vec::new(),
                 }],
                 SourceCheckpointDelta::from_range(8..9),
                 false,
@@ -1172,6 +1185,7 @@ mod tests {
                     timestamp_opt: Some(DateTime::from_timestamp_secs(1_662_529_435)),
                     partition: 1,
                     num_bytes: 30,
+                    sidecar_rows: Vec::new(),
                 }],
                 SourceCheckpointDelta::from_range(8..9),
                 false,
@@ -1256,6 +1270,7 @@ mod tests {
                         timestamp_opt: None,
                         partition: 1,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                     ProcessedDoc {
                         doc: doc!(
@@ -1265,6 +1280,7 @@ mod tests {
                         timestamp_opt: None,
                         partition: 3,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     },
                 ],
                 SourceCheckpointDelta::from_range(8..9),
@@ -1350,6 +1366,7 @@ mod tests {
                         timestamp_opt: None,
                         partition,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     }],
                     SourceCheckpointDelta::from_range(partition..partition + 1),
                     false,
@@ -1428,6 +1445,7 @@ mod tests {
                         timestamp_opt: None,
                         partition: 0,
                         num_bytes: 30,
+                        sidecar_rows: Vec::new(),
                     }],
                     SourceCheckpointDelta::from_range(0..1),
                     false,
@@ -1499,6 +1517,7 @@ mod tests {
                     timestamp_opt: None,
                     partition: 0,
                     num_bytes: 30,
+                    sidecar_rows: Vec::new(),
                 }],
                 SourceCheckpointDelta::from_range(0..1),
                 false,
@@ -1555,6 +1574,7 @@ mod tests {
                     timestamp_opt: None,
                     partition: 0,
                     num_bytes: 30,
+                    sidecar_rows: Vec::new(),
                 }],
                 SourceCheckpointDelta::from_range(0..1),
                 true,

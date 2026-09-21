@@ -32,6 +32,8 @@ use crate::models::{PublishLock, SplitAttrs};
 pub struct IndexedSplitBuilder {
     pub split_attrs: SplitAttrs,
     pub index_writer: tantivy::SingleSegmentIndexWriter,
+    /// One writer per registered [`quickwit_extensions::SplitSidecar`], with its file name.
+    pub sidecar_writers: Vec<(String, Box<dyn quickwit_extensions::SidecarWriter>)>,
     pub split_scratch_directory: TempDirectory,
     pub controlled_directory_opt: Option<ControlledDirectory>,
 }
@@ -95,6 +97,10 @@ impl IndexedSplitBuilder {
 
         let index_writer =
             index_builder.single_segment_index_writer(controlled_directory.clone(), 15_000_000)?;
+        let sidecar_writers = quickwit_extensions::split_sidecars()
+            .iter()
+            .map(|sidecar| Ok((sidecar.file_name().to_string(), sidecar.new_writer()?)))
+            .collect::<std::io::Result<Vec<_>>>()?;
         Ok(Self {
             split_attrs: SplitAttrs {
                 node_id: pipeline_id.node_id,
@@ -111,9 +117,22 @@ impl IndexedSplitBuilder {
                 num_merge_ops: 0,
             },
             index_writer,
+            sidecar_writers,
             split_scratch_directory,
             controlled_directory_opt: Some(controlled_directory),
         })
+    }
+
+    /// Append the next document's row to every sidecar. Call once per `add_document`.
+    pub fn push_sidecar_rows(
+        &mut self,
+        mut rows: Vec<Option<bytes::Bytes>>,
+    ) -> std::io::Result<()> {
+        rows.resize(self.sidecar_writers.len(), None);
+        for ((_, writer), row) in self.sidecar_writers.iter_mut().zip(rows) {
+            writer.push(row)?;
+        }
+        Ok(())
     }
 
     #[instrument(name="serialize_split",
@@ -132,6 +151,15 @@ impl IndexedSplitBuilder {
     )]
     pub fn finalize(self) -> anyhow::Result<IndexedSplit> {
         let index = self.index_writer.finalize()?;
+        for (file_name, writer) in self.sidecar_writers {
+            anyhow::ensure!(
+                u64::from(writer.num_rows()) == self.split_attrs.num_docs,
+                "sidecar `{file_name}` has {} rows but the split has {} documents",
+                writer.num_rows(),
+                self.split_attrs.num_docs
+            );
+            writer.finish(&self.split_scratch_directory.path().join(&file_name))?;
+        }
         Ok(IndexedSplit {
             split_attrs: self.split_attrs,
             index,

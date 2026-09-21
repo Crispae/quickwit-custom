@@ -17,6 +17,7 @@ members = [
   "quickwit-directories",
   "quickwit-doc-mapper",
   "quickwit-dst",
+  "quickwit-extensions",
   "quickwit-index-management",
   "quickwit-indexing",
   "quickwit-ingest",
@@ -403,6 +404,7 @@ quickwit-df-core = { path = "quickwit-df-core" }
 quickwit-directories = { path = "quickwit-directories" }
 quickwit-doc-mapper = { path = "quickwit-doc-mapper" }
 quickwit-dst = { path = "quickwit-dst" }
+quickwit-extensions = { path = "quickwit-extensions" }
 quickwit-index-management = { path = "quickwit-index-management" }
 quickwit-indexing = { path = "quickwit-indexing" }
 quickwit-ingest = { path = "quickwit-ingest" }

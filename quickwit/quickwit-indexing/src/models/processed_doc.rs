@@ -14,6 +14,7 @@
 
 use std::fmt;
 
+use bytes::Bytes;
 use quickwit_common::metrics::IN_FLIGHT_INDEXER_MAILBOX;
 use quickwit_metastore::checkpoint::SourceCheckpointDelta;
 use quickwit_metrics::GaugeGuard;
@@ -24,6 +25,9 @@ pub struct ProcessedDoc {
     pub timestamp_opt: Option<DateTime>,
     pub partition: u64,
     pub num_bytes: usize,
+    /// One entry per registered [`quickwit_extensions::SplitSidecar`], in registration order
+    /// (empty when none is registered). Row `i` of each sidecar belongs to this document.
+    pub sidecar_rows: Vec<Option<Bytes>>,
 }
 
 impl fmt::Debug for ProcessedDoc {
