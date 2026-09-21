@@ -21,8 +21,16 @@
 //! * [`SplitSidecar`]: an extra per-split file whose rows are aligned with the split's
 //!   document ids. It is built while documents are indexed, rebuilt on merges (dropping deleted
 //!   documents), shipped inside the split bundle and readable at query time.
+//! * [`QueryExtension`]: a query type evaluated by the application inside leaf search, with an
+//!   asynchronous per-split warmup ([`ExtensionWarmup`]) for data tantivy does not know about.
 
+mod query;
 mod sidecar;
+
+pub use query::{
+    ExtensionQueryBuild, ExtensionWarmup, ExtensionWarmups, QueryExtension, query_extension,
+    register_query_extension,
+};
 
 pub use sidecar::{
     SidecarMergeSource, SidecarWriter, SplitSidecar, register_split_sidecar, split_sidecars,

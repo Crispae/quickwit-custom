@@ -17,7 +17,7 @@ use crate::query_ast::cache_node::CacheState;
 use crate::query_ast::field_presence::FieldPresenceQuery;
 use crate::query_ast::user_input_query::UserInputQuery;
 use crate::query_ast::{
-    BoolQuery, CacheNode, FullTextQuery, PhrasePrefixQuery, QueryAst, RangeQuery, RegexQuery,
+    BoolQuery, CacheNode, ExtensionQuery, FullTextQuery, PhrasePrefixQuery, QueryAst, RangeQuery, RegexQuery,
     TermQuery, TermSetQuery, WildcardQuery,
 };
 
@@ -43,7 +43,12 @@ pub trait QueryAstVisitor<'a> {
             QueryAst::Wildcard(wildcard) => self.visit_wildcard(wildcard),
             QueryAst::Regex(regex) => self.visit_regex(regex),
             QueryAst::Cache(cache_node) => self.visit_cache_node(cache_node),
+            QueryAst::Extension(extension) => self.visit_extension(extension),
         }
+    }
+
+    fn visit_extension(&mut self, _extension: &'a ExtensionQuery) -> Result<(), Self::Err> {
+        Ok(())
     }
 
     fn visit_bool(&mut self, bool_query: &'a BoolQuery) -> Result<(), Self::Err> {
@@ -150,7 +155,15 @@ pub trait QueryAstTransformer {
             QueryAst::Wildcard(wildcard) => self.transform_wildcard(wildcard),
             QueryAst::Regex(regex) => self.transform_regex(regex),
             QueryAst::Cache(cache_node) => self.transform_cache_node(cache_node),
+            QueryAst::Extension(extension) => self.transform_extension(extension),
         }
+    }
+
+    fn transform_extension(
+        &mut self,
+        extension: ExtensionQuery,
+    ) -> Result<Option<QueryAst>, Self::Err> {
+        Ok(Some(QueryAst::Extension(extension)))
     }
 
     fn transform_bool(&mut self, mut bool_query: BoolQuery) -> Result<Option<QueryAst>, Self::Err> {

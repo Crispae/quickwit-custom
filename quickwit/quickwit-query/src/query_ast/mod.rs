@@ -23,6 +23,7 @@ use crate::tokenizers::TokenizerManager;
 
 mod bool_query;
 mod cache_node;
+mod extension_query;
 mod field_presence;
 mod full_text_query;
 mod phrase_prefix_query;
@@ -39,6 +40,7 @@ mod wildcard_query;
 
 pub use bool_query::BoolQuery;
 pub use cache_node::{CacheNode, HitSet, PredicateCache, PredicateCacheInjector};
+pub use extension_query::{ExtensionOutputs, ExtensionQuery};
 pub use field_presence::FieldPresenceQuery;
 pub use full_text_query::{FullTextMode, FullTextParams, FullTextQuery};
 pub use phrase_prefix_query::PhrasePrefixQuery;
@@ -74,6 +76,8 @@ pub enum QueryAst {
         boost: NotNaNf32,
     },
     Cache(CacheNode),
+    /// A query implemented by an application-registered extension.
+    Extension(ExtensionQuery),
 }
 
 impl QueryAst {
@@ -111,7 +115,8 @@ impl QueryAst {
             | ast @ QueryAst::FieldPresence(_)
             | ast @ QueryAst::Range(_)
             | ast @ QueryAst::Wildcard(_)
-            | ast @ QueryAst::Regex(_) => Ok(ast),
+            | ast @ QueryAst::Regex(_)
+            | ast @ QueryAst::Extension(_) => Ok(ast),
             QueryAst::UserInput(user_text_query) => {
                 user_text_query.parse_user_query(default_search_fields)
             }
@@ -181,6 +186,8 @@ pub struct BuildTantivyAstContext<'a> {
     pub tokenizer_manager: &'a TokenizerManager,
     pub search_fields: &'a [String],
     pub with_validation: bool,
+    /// Collects what extension queries produce besides their tantivy query.
+    pub extension_outputs: ExtensionOutputs,
 }
 
 impl<'a> BuildTantivyAstContext<'a> {
@@ -196,6 +203,7 @@ impl<'a> BuildTantivyAstContext<'a> {
             tokenizer_manager: &DEFAULT_TOKENIZER_MANAGER,
             search_fields: &[],
             with_validation: true,
+            extension_outputs: ExtensionOutputs::default(),
         }
     }
 
@@ -259,6 +267,7 @@ impl BuildTantivyAst for QueryAst {
             QueryAst::Wildcard(wildcard) => wildcard.build_tantivy_ast_call(context),
             QueryAst::Regex(regex) => regex.build_tantivy_ast_call(context),
             QueryAst::Cache(cache_node) => cache_node.build_tantivy_ast_call(context),
+            QueryAst::Extension(extension) => extension.build_tantivy_ast_call(context),
         }
     }
 }
@@ -288,6 +297,11 @@ impl QueryAst {
             context.schema,
             &mut required_terms,
         );
+        // An extension's required terms are only required overall when it is the whole query.
+        let extension_required_terms = context.extension_outputs.take_required_terms();
+        if matches!(self, QueryAst::Extension(_)) {
+            required_terms.extend(extension_required_terms);
+        }
         Ok((tantivy_query_ast.into(), required_terms))
     }
 }

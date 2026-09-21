@@ -115,6 +115,9 @@ pub struct WarmupInfo {
     /// early. This is a conservative subset (see
     /// `quickwit_query::query_ast::required_terms`).
     pub required_terms: HashSet<Term>,
+    /// Extension query warmups, run after everything above is local and before the query
+    /// executes.
+    pub extensions: quickwit_extensions::ExtensionWarmups,
 }
 
 impl WarmupInfo {
@@ -158,6 +161,7 @@ impl WarmupInfo {
         // Required terms come from the query; a collector's `WarmupInfo` carries
         // none, so this union simply preserves the query's set.
         self.required_terms.extend(other.required_terms);
+        self.extensions.0.extend(other.extensions.0);
     }
 
     /// Simplify a WarmupInfo, removing some redundant tasks

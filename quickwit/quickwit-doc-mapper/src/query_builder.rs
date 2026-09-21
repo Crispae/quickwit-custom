@@ -225,6 +225,9 @@ pub(crate) fn build_query(
         fast_fields,
         automatons_grouped_by_field,
         required_terms,
+        extensions: quickwit_extensions::ExtensionWarmups(
+            context.extension_outputs.take_warmups(),
+        ),
         ..WarmupInfo::default()
     };
 

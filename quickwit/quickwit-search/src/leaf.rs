@@ -50,7 +50,7 @@ use quickwit_storage::{
 use tantivy::aggregation::AggContextParams;
 use tantivy::aggregation::agg_req::{AggregationVariants, Aggregations};
 use tantivy::collector::Collector;
-use tantivy::directory::FileSlice;
+use tantivy::directory::{Directory, FileSlice};
 use tantivy::fastfield::FastFieldReaders;
 use tantivy::index::SegmentId;
 use tantivy::schema::Field;
@@ -303,6 +303,7 @@ async fn run_cancellable(
 #[instrument(skip_all)]
 pub(crate) async fn warmup(
     searcher: &Searcher,
+    split_directory: &dyn Directory,
     warmup_info: &WarmupInfo,
     on_absent: &(dyn Fn(&Term, SegmentId) + Sync),
 ) -> anyhow::Result<bool> {
@@ -375,7 +376,18 @@ pub(crate) async fn warmup(
         Some(abort_token) => abort_token.is_cancelled(),
         None => false,
     };
-    Ok(provably_empty)
+    if provably_empty {
+        return Ok(true);
+    }
+    // Extensions run last: they may read the postings warmed above (e.g. to find candidate
+    // documents) before fetching their own data.
+    for extension_warmup in &warmup_info.extensions.0 {
+        extension_warmup
+            .warm(searcher, split_directory)
+            .instrument(debug_span!("warm_up_extension"))
+            .await?;
+    }
+    Ok(false)
 }
 
 async fn warm_up_term_dict_fields(
@@ -779,7 +791,7 @@ async fn leaf_search_single_split(
                 HitSet::empty(),
             );
         };
-        warmup(&searcher, &warmup_info, &record_absence).await?
+        warmup(&searcher, &hot_directory, &warmup_info, &record_absence).await?
     };
     let warmup_end = Instant::now();
     let warmup_duration: Duration = warmup_end.duration_since(warmup_start);
@@ -2851,7 +2863,7 @@ mod tests {
         // `on_absent` was invoked with.
         async fn run(searcher: &Searcher, warmup_info: &WarmupInfo) -> (bool, Vec<Term>) {
             let reported = std::sync::Mutex::new(Vec::new());
-            let provably_empty = warmup(searcher, warmup_info, &|term: &Term, _segment_id| {
+            let provably_empty = warmup(searcher, searcher.index().directory(), warmup_info, &|term: &Term, _segment_id| {
                 reported.lock().unwrap().push(term.clone());
             })
             .await

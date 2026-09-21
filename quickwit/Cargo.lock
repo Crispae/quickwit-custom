@@ -8691,6 +8691,7 @@ dependencies = [
  "async-trait",
  "postcard",
  "quickwit-common",
+ "quickwit-extensions",
  "quickwit-storage",
  "serde",
  "tantivy",
@@ -8716,6 +8717,7 @@ dependencies = [
  "nom 8.0.0",
  "quickwit-common",
  "quickwit-datetime",
+ "quickwit-extensions",
  "quickwit-macros",
  "quickwit-proto",
  "quickwit-query",
@@ -8743,8 +8745,11 @@ dependencies = [
 name = "quickwit-extensions"
 version = "0.9.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "bytes",
  "serde_json",
+ "tantivy",
 ]
 
 [[package]]
@@ -9227,6 +9232,7 @@ dependencies = [
  "proptest",
  "quickwit-common",
  "quickwit-datetime",
+ "quickwit-extensions",
  "regex",
  "rustc-hash",
  "serde",
@@ -9289,6 +9295,7 @@ dependencies = [
  "quickwit-config",
  "quickwit-directories",
  "quickwit-doc-mapper",
+ "quickwit-extensions",
  "quickwit-indexing",
  "quickwit-metastore",
  "quickwit-metrics",
