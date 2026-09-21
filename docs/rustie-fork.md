@@ -21,6 +21,12 @@ Why the query filters in its scorer rather than after collection: the collector 
 `num_hits`, keeps the top-k and honours `search_after`. Rejecting documents before it sees them
 keeps all three exact and means rejected documents are never fetched.
 
+## Fixes carried by the fork (not hooks)
+
+| Commit | Fix | Touches |
+| --- | --- | --- |
+| `fix(indexing): create the vec source from its typed params, not through JSON` | `TypedSourceFactory` obtains a source's params by serializing the source config to `serde_json::Value` and back; for a vec source that turns every document byte into a JSON number (~25 µs and ~23× the batch bytes of peak memory per document, on every pipeline spawn). `VecSourceFactory` now implements `SourceFactory` directly. Upstream-worthy on its own. | `quickwit-indexing/src/source/vec_source.rs` |
+
 ## Invariants the hooks rely on
 
 - Quickwit never sets `sort_by_field`, so a split's documents are numbered in `add_document`

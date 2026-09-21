@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use quickwit_actors::ActorExitStatus;
-use quickwit_config::VecSourceParams;
+use quickwit_config::{SourceParams, VecSourceParams};
 use quickwit_metastore::checkpoint::{PartitionId, SourceCheckpointDelta};
 use quickwit_proto::metastore::SourceType;
 use quickwit_proto::types::{Position, SourceId};
@@ -25,7 +25,7 @@ use serde_json::Value as JsonValue;
 use tracing::info;
 
 use super::BatchBuilder;
-use crate::source::{Source, SourceContext, SourceRuntime, SourceSink, TypedSourceFactory};
+use crate::source::{Source, SourceContext, SourceFactory, SourceRuntime, SourceSink};
 
 pub struct VecSource {
     source_id: SourceId,
@@ -44,14 +44,11 @@ impl fmt::Debug for VecSource {
 
 pub struct VecSourceFactory;
 
-#[async_trait]
-impl TypedSourceFactory for VecSourceFactory {
-    type Source = VecSource;
-    type Params = VecSourceParams;
-    async fn typed_create_source(
+impl VecSourceFactory {
+    async fn create(
         source_runtime: SourceRuntime,
         source_params: VecSourceParams,
-    ) -> anyhow::Result<Self::Source> {
+    ) -> anyhow::Result<VecSource> {
         let checkpoint = source_runtime.fetch_checkpoint().await?;
         let partition = PartitionId::from(source_params.partition.as_str());
         let next_item_idx = checkpoint
@@ -69,6 +66,24 @@ impl TypedSourceFactory for VecSourceFactory {
             partition,
             next_item_idx,
         })
+    }
+}
+
+// Not a `TypedSourceFactory`: that adapter obtains the params by serializing the source config
+// to a `serde_json::Value` and deserializing it back, which for a vec source turns every byte of
+// every document into a JSON number (about 25 µs and tens of bytes of memory per document).
+// The params are already typed, and cloning them only bumps the documents' reference counts.
+#[async_trait]
+impl SourceFactory for VecSourceFactory {
+    async fn create_source(
+        &self,
+        source_runtime: SourceRuntime,
+    ) -> anyhow::Result<Box<dyn Source>> {
+        let SourceParams::Vec(source_params) = &source_runtime.source_config.source_params else {
+            anyhow::bail!("vec source factory called with non-vec source params");
+        };
+        let source_params = source_params.clone();
+        Ok(Box::new(Self::create(source_runtime, source_params).await?))
     }
 }
 
@@ -145,6 +160,44 @@ mod tests {
     use crate::source::tests::SourceRuntimeBuilder;
 
     #[tokio::test]
+    async fn test_vec_source_factory_create_source() -> anyhow::Result<()> {
+        let docs: Vec<Bytes> = (0..10)
+            .map(|i| Bytes::from(format!("{{\"i\":{i}}}")))
+            .collect();
+        let params = VecSourceParams {
+            docs,
+            batch_num_docs: 4,
+            partition: "partition".to_string(),
+        };
+        let index_uid = IndexUid::new_with_random_ulid("test-index");
+        let source_config = SourceConfig {
+            source_id: "test-vec-source".to_string(),
+            num_pipelines: NonZeroUsize::MIN,
+            enabled: true,
+            source_params: SourceParams::Vec(params),
+            transform_config: None,
+            input_format: SourceInputFormat::Json,
+        };
+        // The entry point the indexing pipeline uses.
+        let source_runtime = SourceRuntimeBuilder::new(index_uid.clone(), source_config).build();
+        let source = VecSourceFactory.create_source(source_runtime).await?;
+        assert_eq!(source.observable_state(), json!({"next_item_idx": 0}));
+
+        // Any other kind of params is refused rather than misread.
+        let wrong_config = SourceConfig {
+            source_id: "test-void-source".to_string(),
+            num_pipelines: NonZeroUsize::MIN,
+            enabled: true,
+            source_params: SourceParams::void(),
+            transform_config: None,
+            input_format: SourceInputFormat::Json,
+        };
+        let source_runtime = SourceRuntimeBuilder::new(index_uid, wrong_config).build();
+        assert!(VecSourceFactory.create_source(source_runtime).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_vec_source() -> anyhow::Result<()> {
         let universe = Universe::with_accelerated_time();
         let (doc_processor_mailbox, doc_processor_inbox) =
@@ -167,7 +220,7 @@ mod tests {
             input_format: SourceInputFormat::Json,
         };
         let source_runtime = SourceRuntimeBuilder::new(index_uid, source_config).build();
-        let vec_source = VecSourceFactory::typed_create_source(source_runtime, params).await?;
+        let vec_source = VecSourceFactory::create(source_runtime, params).await?;
         let vec_source_actor = SourceActor::new(Box::new(vec_source), doc_processor_mailbox);
         assert_eq!(
             vec_source_actor.name(),
@@ -216,7 +269,7 @@ mod tests {
         let source_runtime = SourceRuntimeBuilder::new(index_uid, source_config)
             .with_mock_metastore(Some(source_delta))
             .build();
-        let vec_source = VecSourceFactory::typed_create_source(source_runtime, params).await?;
+        let vec_source = VecSourceFactory::create(source_runtime, params).await?;
         let vec_source_actor = SourceActor::new(Box::new(vec_source), doc_processor_mailbox);
         let (_vec_source_mailbox, vec_source_handle) =
             universe.spawn_builder().spawn(vec_source_actor);
