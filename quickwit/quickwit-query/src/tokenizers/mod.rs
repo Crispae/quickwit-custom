@@ -92,6 +92,21 @@ pub fn create_default_quickwit_tokenizer_manager() -> TokenizerManager {
         true,
     );
     tokenizer_manager.register("datadog", unicode_segmenter_tokenizer, true);
+
+    // Tokenizers an embedding application registered through `quickwit_extensions` (see
+    // `quickwit_extensions::register_tokenizer`). A name that collides with one of the built-ins
+    // above is dropped: Quickwit's own names must keep their own meaning.
+    for (name, analyzer) in quickwit_extensions::registered_tokenizers() {
+        if tokenizer_manager.get_tokenizer(&name).is_some() {
+            tracing::warn!(
+                tokenizer = %name,
+                "extension tokenizer name collides with a built-in tokenizer; ignoring it"
+            );
+            continue;
+        }
+        tokenizer_manager.register(&name, analyzer, false);
+    }
+
     tokenizer_manager
 }
 

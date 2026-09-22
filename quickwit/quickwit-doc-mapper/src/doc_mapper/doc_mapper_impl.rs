@@ -2517,4 +2517,121 @@ mod tests {
 
         assert_eq!(new_mapper.doc_to_json(named_doc.0).unwrap(), doc);
     }
+
+    /// A tokenizer registered through `quickwit_extensions` is usable by name in a doc mapping,
+    /// and the positions it emits (here several terms at one position) reach the postings.
+    #[test]
+    fn test_extension_tokenizer_places_several_terms_at_one_position() {
+        use tantivy::postings::Postings;
+        use tantivy::schema::IndexRecordOption;
+        use tantivy::tokenizer::{TextAnalyzer, Token, TokenStream, Tokenizer};
+        use tantivy::{DocSet, Index, Term};
+
+        /// `a|b,c|` → `a`@0, `b`@1, `c`@1: slots split on `|`, labels within a slot on `,`.
+        #[derive(Clone)]
+        struct SlotTokenizer;
+
+        struct SlotTokenStream {
+            tokens: Vec<Token>,
+            next: usize,
+        }
+
+        impl TokenStream for SlotTokenStream {
+            fn advance(&mut self) -> bool {
+                self.next += 1;
+                self.next <= self.tokens.len()
+            }
+            fn token(&self) -> &Token {
+                &self.tokens[self.next - 1]
+            }
+            fn token_mut(&mut self) -> &mut Token {
+                &mut self.tokens[self.next - 1]
+            }
+        }
+
+        impl Tokenizer for SlotTokenizer {
+            type TokenStream<'a> = SlotTokenStream;
+            fn token_stream<'a>(&'a mut self, text: &'a str) -> SlotTokenStream {
+                let mut tokens = Vec::new();
+                let mut offset = 0;
+                for (position, slot) in text.split('|').enumerate() {
+                    let mut label_offset = offset;
+                    for label in slot.split(',') {
+                        if !label.is_empty() {
+                            tokens.push(Token {
+                                offset_from: label_offset,
+                                offset_to: label_offset + label.len(),
+                                position,
+                                text: label.to_string(),
+                                position_length: 1,
+                            });
+                        }
+                        label_offset += label.len() + 1;
+                    }
+                    offset += slot.len() + 1;
+                }
+                SlotTokenStream { tokens, next: 0 }
+            }
+        }
+
+        quickwit_extensions::register_tokenizer(
+            "test_extension_slots",
+            TextAnalyzer::from(SlotTokenizer),
+        );
+        let mapper = serde_json::from_str::<DocMapper>(
+            r#"{
+            "field_mappings": [
+                {
+                    "name": "labels",
+                    "type": "text",
+                    "tokenizer": "test_extension_slots",
+                    "record": "position"
+                }
+            ]
+        }"#,
+        )
+        .expect("a registered extension tokenizer must be a known tokenizer name");
+
+        let schema = mapper.schema();
+        let field = schema.get_field("labels").unwrap();
+        let mut index = Index::create_in_ram(schema);
+        index.set_tokenizers(mapper.tokenizer_manager().tantivy_manager().clone());
+        let mut writer = index.writer_with_num_threads(1, 15_000_000).unwrap();
+        let (_, doc) = mapper
+            .doc_from_json_str(r#"{"labels": "det||nsubj,advmod|punct"}"#)
+            .unwrap();
+        writer.add_document(doc).unwrap();
+        writer.commit().unwrap();
+
+        let searcher = index.reader().unwrap().searcher();
+        let inverted_index = searcher.segment_reader(0).inverted_index(field).unwrap();
+        // The empty slot 1 emits nothing but still advances the position.
+        for (label, expected) in [("det", 0), ("nsubj", 2), ("advmod", 2), ("punct", 3)] {
+            let mut postings = inverted_index
+                .read_postings(
+                    &Term::from_field_text(field, label),
+                    IndexRecordOption::WithFreqsAndPositions,
+                )
+                .unwrap()
+                .unwrap_or_else(|| panic!("`{label}` was not indexed"));
+            assert_eq!(postings.doc(), 0);
+            let mut positions = Vec::new();
+            postings.positions(&mut positions);
+            assert_eq!(positions, vec![expected], "positions of `{label}`");
+        }
+    }
+
+    #[test]
+    fn test_extension_tokenizer_cannot_shadow_a_built_in() {
+        quickwit_extensions::register_tokenizer(
+            "raw",
+            tantivy::tokenizer::TextAnalyzer::from(tantivy::tokenizer::WhitespaceTokenizer::default()),
+        );
+        let manager = quickwit_query::create_default_quickwit_tokenizer_manager();
+        let mut raw = manager.get_tokenizer("raw").unwrap();
+        let mut stream = raw.token_stream("two words");
+        // Still Quickwit's raw tokenizer: the whole text is one token.
+        assert_eq!(stream.next().unwrap().text, "two words");
+        assert!(stream.next().is_none());
+    }
 }

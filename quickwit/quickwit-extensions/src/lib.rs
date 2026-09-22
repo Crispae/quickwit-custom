@@ -23,9 +23,14 @@
 //!   documents), shipped inside the split bundle and readable at query time.
 //! * [`QueryExtension`]: a query type evaluated by the application inside leaf search, with an
 //!   asynchronous per-split warmup ([`ExtensionWarmup`]) for data tantivy does not know about.
+//! * [`register_tokenizer`]: a Tantivy `TextAnalyzer` made available under a name, for doc
+//!   mappings that reference it. Quickwit's own tokenizer config is a closed list (simple, ngram,
+//!   regex, source_code); this hook lets an embedding application add its own, e.g. one that
+//!   places several terms at one token position.
 
 mod query;
 mod sidecar;
+mod tokenizer;
 
 pub use query::{
     ExtensionQueryBuild, ExtensionWarmup, ExtensionWarmups, QueryExtension, query_extension,
@@ -35,3 +40,5 @@ pub use query::{
 pub use sidecar::{
     SidecarMergeSource, SidecarWriter, SplitSidecar, register_split_sidecar, split_sidecars,
 };
+
+pub use tokenizer::{register_tokenizer, registered_tokenizers};
